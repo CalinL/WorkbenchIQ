@@ -162,16 +162,24 @@ export async function getApplication(appId: string): Promise<ApplicationMetadata
 /**
  * Extract deep dive data from an application's llm_outputs.
  * No API call needed — reads from existing llm_outputs on the application object.
+ * Filters out error data (subsections where parsing failed).
  */
 export function getDeepDiveData(app: ApplicationMetadata): DeepDiveData {
   const ms = app.llm_outputs?.medical_summary;
 
-  const bodySystemReview = (ms?.body_system_review?.parsed as BodySystemReviewParsed | undefined) ?? null;
-  const pendingInvestigations = (ms?.pending_investigations?.parsed as PendingInvestigationsParsed | undefined) ?? null;
-  const lastOfficeVisit = (ms?.last_office_visit?.parsed as LastOfficeVisitParsed | undefined) ?? null;
-  const abnormalLabs = (ms?.abnormal_labs?.parsed as AbnormalLabsParsed | undefined) ?? null;
-  const latestVitals = (ms?.latest_vitals?.parsed as LatestVitalsParsed | undefined) ?? null;
-  const familyHistory = ms?.family_history?.parsed ?? null;
+  // Helper: return parsed data only if it's valid (no _error key)
+  const validParsed = (subsection: any) => {
+    const parsed = subsection?.parsed;
+    if (!parsed || (typeof parsed === 'object' && '_error' in parsed)) return null;
+    return parsed;
+  };
+
+  const bodySystemReview = (validParsed(ms?.body_system_review) as BodySystemReviewParsed | null);
+  const pendingInvestigations = (validParsed(ms?.pending_investigations) as PendingInvestigationsParsed | null);
+  const lastOfficeVisit = (validParsed(ms?.last_office_visit) as LastOfficeVisitParsed | null);
+  const abnormalLabs = (validParsed(ms?.abnormal_labs) as AbnormalLabsParsed | null);
+  const latestVitals = (validParsed(ms?.latest_vitals) as LatestVitalsParsed | null);
+  const familyHistory = validParsed(ms?.family_history);
 
   const hasData = !!(bodySystemReview || pendingInvestigations || lastOfficeVisit || abnormalLabs || latestVitals);
 
@@ -252,10 +260,14 @@ export async function runUnderwritingAnalysis(
  */
 export async function runDeepDiveAnalysis(
   appId: string,
-  background: boolean = false
+  background: boolean = false,
+  force: boolean = false
 ): Promise<ApplicationMetadata> {
-  const params = background ? '?background=true' : '';
-  return apiFetch<ApplicationMetadata>(`/api/applications/${appId}/analyze/deep-dive${params}`, {
+  const qp = new URLSearchParams();
+  if (background) qp.set('background', 'true');
+  if (force) qp.set('force', 'true');
+  const qs = qp.toString();
+  return apiFetch<ApplicationMetadata>(`/api/applications/${appId}/analyze/deep-dive${qs ? `?${qs}` : ''}`, {
     method: 'POST',
   });
 }

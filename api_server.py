@@ -932,12 +932,12 @@ async def analyze_application(app_id: str, request: AnalyzeRequest = None, backg
 
 
 @app.post("/api/applications/{app_id}/analyze/deep-dive")
-async def analyze_deep_dive(app_id: str, background: bool = False):
+async def analyze_deep_dive(app_id: str, background: bool = False, force: bool = False):
     """Run only the 5 deep-dive subsections within medical_summary.
     
     This is an incremental re-analysis that:
-    1. Detects which deep-dive subsections are missing
-    2. Runs only those subsections (or all 5 if force re-run)
+    1. Detects which deep-dive subsections are missing or have errors
+    2. Runs only those subsections (or all 5 if force=True)
     3. Merges results with existing llm_outputs
     
     Useful for adding deep dive to applications analyzed before the feature existed.
@@ -945,6 +945,7 @@ async def analyze_deep_dive(app_id: str, background: bool = False):
     Args:
         app_id: Application ID
         background: If True, run in background and return immediately
+        force: If True, re-run all 5 deep-dive subsections regardless of existing data
     """
     try:
         settings = load_settings()
@@ -967,9 +968,25 @@ async def analyze_deep_dive(app_id: str, background: bool = False):
             "latest_vitals",
         ]
         
-        # Check which are missing
+        # Check which are missing or have errors
         existing_ms = app_md.llm_outputs.get("medical_summary", {}) if app_md.llm_outputs else {}
-        missing = [k for k in deep_dive_keys if k not in existing_ms]
+        
+        if force:
+            missing = list(deep_dive_keys)
+            errored = []
+            logger.info("Force re-run requested — running all 5 deep dive subsections for %s", app_id)
+        else:
+            missing = []
+            errored = []
+            for k in deep_dive_keys:
+                if k not in existing_ms:
+                    missing.append(k)
+                else:
+                    # Also treat subsections with error data as needing re-run
+                    parsed = (existing_ms[k] or {}).get("parsed") if isinstance(existing_ms[k], dict) else None
+                    if isinstance(parsed, dict) and "_error" in parsed:
+                        errored.append(k)
+                        missing.append(k)
         
         if not missing:
             logger.info("All deep dive subsections already present for %s", app_id)
@@ -977,6 +994,9 @@ async def analyze_deep_dive(app_id: str, background: bool = False):
                 **application_to_dict(app_md),
                 "message": "All deep dive subsections already present. No re-analysis needed."
             }
+        
+        if errored:
+            logger.info("Deep dive subsections with errors that will be re-run for %s: %s", app_id, errored)
         
         logger.info("Running deep dive for %s: %d subsections missing", app_id, len(missing))
         
