@@ -184,22 +184,3 @@ azd up
 ```bash
 azd down --purge
 ```
-
-## Files Reference
-
-| File | Purpose |
-|------|---------|
-| `azure.yaml` | azd project manifest (2 services: api + web) |
-| `infra/main.bicep` | Orchestrates all Azure resources |
-| `infra/modules/ai-services.bicep` | AIServices + 4 model deployments |
-| `infra/modules/app-service.bicep` | App Service Plan + both apps + Easy Auth config |
-| `infra/modules/storage.bicep` | Storage Account + blob container |
-| `infra/modules/monitoring.bicep` | Log Analytics + Application Insights |
-| `infra/modules/role-assignment.bicep` | Cognitive Services User RBAC |
-| `infra/modules/storage-role-assignment.bicep` | Storage Blob Data Contributor RBAC |
-| `api_server.py` | EasyAuthMiddleware + ApiKeyMiddleware |
-| `frontend/src/middleware.ts` | Custom auth + Easy Auth detection |
-| `frontend/src/app/api/[...path]/route.ts` | Proxy with auth header forwarding |
-| `frontend/src/lib/api.ts` | Media URL routing (proxy vs direct) |
-| `scripts/setup_auth.py` | Generate auth credentials for local dev |
-| `.env.example` | Template with all auth env vars |
