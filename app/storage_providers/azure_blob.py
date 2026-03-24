@@ -62,6 +62,17 @@ class AzureBlobStorageProvider:
                 connection_timeout=settings.azure_timeout_seconds,
                 read_timeout=settings.azure_timeout_seconds,
             )
+        elif settings.azure_use_managed_identity and settings.azure_account_name:
+            from azure.identity import DefaultAzureCredential
+            account_url = f"https://{settings.azure_account_name}.blob.core.windows.net"
+            credential = DefaultAzureCredential()
+            self._blob_service = BlobServiceClient(
+                account_url=account_url,
+                credential=credential,
+                retry_policy=retry_policy,
+                connection_timeout=settings.azure_timeout_seconds,
+                read_timeout=settings.azure_timeout_seconds,
+            )
         elif settings.azure_account_name and settings.azure_account_key:
             account_url = f"https://{settings.azure_account_name}.blob.core.windows.net"
             self._blob_service = BlobServiceClient(
@@ -73,7 +84,8 @@ class AzureBlobStorageProvider:
             )
         else:
             raise ValueError(
-                "Azure Blob Storage requires either AZURE_STORAGE_CONNECTION_STRING "
+                "Azure Blob Storage requires either AZURE_STORAGE_CONNECTION_STRING, "
+                "AZURE_STORAGE_USE_MANAGED_IDENTITY=true with AZURE_STORAGE_ACCOUNT_NAME, "
                 "or both AZURE_STORAGE_ACCOUNT_NAME and AZURE_STORAGE_ACCOUNT_KEY"
             )
         

@@ -62,6 +62,12 @@ function isAuthEnabled(): boolean {
 }
 
 export async function middleware(request: NextRequest) {
+  // If Easy Auth is active (Azure App Service injects this header),
+  // skip custom auth entirely — AAD has already authenticated the user
+  if (request.headers.get('x-ms-client-principal')) {
+    return NextResponse.next();
+  }
+
   // If no AUTH_USER_* vars are set, auth is disabled — let everything through
   if (!isAuthEnabled()) {
     return NextResponse.next();
@@ -69,11 +75,12 @@ export async function middleware(request: NextRequest) {
 
   const { pathname } = request.nextUrl;
 
-  // Allow public paths without auth
+  // Allow public paths without auth.
+  // All /api/* routes are passed through because the backend enforces its own
+  // API-key auth — the proxy layer injects X-API-Key server-side.
   if (
     pathname === '/login' ||
-    pathname.startsWith('/api/auth/') ||
-    pathname === '/api/health' ||
+    pathname.startsWith('/api/') ||
     pathname.startsWith('/_next/') ||
     pathname.startsWith('/favicon') ||
     pathname.endsWith('.ico') ||

@@ -349,7 +349,7 @@ export default function LandingPage({
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
             <div>
               <h1 className="text-2xl font-bold text-slate-900">
-                {getGreeting()}, Jawad!
+                {getGreeting()}, Calin!
               </h1>
               <p className="text-slate-500 mt-1 flex items-center gap-2">
                 <span 
