@@ -54,9 +54,33 @@ async function proxyRequest(
       ? `${API_BASE_URL}/api/${path}?${queryString}`
       : `${API_BASE_URL}/api/${path}`;
 
-    const headers: HeadersInit = {
+    const headers: Record<string, string> = {
       'Content-Type': 'application/json',
     };
+
+    // Inject API key for backend authentication (server-side only, never exposed to browser)
+    const apiSecretKey = process.env.API_SECRET_KEY;
+    if (apiSecretKey) {
+      headers['x-api-key'] = apiSecretKey;
+    }
+
+    // Forward Easy Auth / Azure AD headers from the incoming request
+    const authHeadersToForward = [
+      'authorization',
+      'cookie',
+      'x-ms-client-principal',
+      'x-ms-client-principal-id',
+      'x-ms-client-principal-name',
+      'x-ms-client-principal-idp',
+      'x-ms-token-aad-access-token',
+      'x-ms-token-aad-id-token',
+    ];
+    for (const name of authHeadersToForward) {
+      const value = request.headers.get(name);
+      if (value) {
+        headers[name] = value;
+      }
+    }
 
     const fetchOptions: RequestInit = {
       method: method || request.method,

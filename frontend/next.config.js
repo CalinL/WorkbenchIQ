@@ -1,5 +1,10 @@
 /** @type {import('next').NextConfig} */
 const { execSync } = require('child_process');
+const path = require('path');
+
+// Load the root .env file so server-side code (API routes, middleware)
+// can read API_SECRET_KEY, AUTH_USER_*, AUTH_SECRET, etc.
+require('dotenv').config({ path: path.resolve(__dirname, '..', '.env') });
 
 // Capture git commit SHA at build time
 let commitSha = process.env.COMMIT_SHA || '';

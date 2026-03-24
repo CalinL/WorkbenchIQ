@@ -82,6 +82,91 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+# ---------------------------------------------------------------------------
+# Easy Auth middleware — decodes Azure App Service authentication headers
+# and attaches user info to request.state for logging and audit.
+# Safe no-op when Easy Auth is not enabled (local dev).
+# ---------------------------------------------------------------------------
+import base64
+
+from starlette.middleware.base import BaseHTTPMiddleware
+
+
+class EasyAuthMiddleware(BaseHTTPMiddleware):
+    """Decode X-MS-CLIENT-PRINCIPAL injected by Azure App Service Easy Auth."""
+
+    async def dispatch(self, request: Request, call_next):
+        principal_header = request.headers.get("x-ms-client-principal")
+        if principal_header:
+            try:
+                decoded = json.loads(base64.b64decode(principal_header))
+                claims = {c["typ"]: c["val"] for c in decoded.get("claims", [])}
+                request.state.user = {
+                    "name": claims.get("name", ""),
+                    "email": claims.get(
+                        "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress",
+                        claims.get("preferred_username", ""),
+                    ),
+                    "provider": decoded.get("auth_typ", ""),
+                }
+                logger.info("Authenticated user: %s", request.state.user.get("email") or request.state.user.get("name"))
+            except Exception:
+                request.state.user = None
+        else:
+            request.state.user = None
+
+        return await call_next(request)
+
+
+app.add_middleware(EasyAuthMiddleware)
+
+
+# ---------------------------------------------------------------------------
+# API Key middleware — gates all endpoints when API_SECRET_KEY is set.
+# Skipped when Easy Auth is active (X-MS-CLIENT-PRINCIPAL present).
+# Allows Swagger UI (/docs, /openapi.json, /) without a key.
+# ---------------------------------------------------------------------------
+
+_API_SECRET_KEY = os.getenv("API_SECRET_KEY", "")
+
+# Paths that are always open (Swagger, health, root)
+_PUBLIC_PATHS = {"/", "/docs", "/openapi.json", "/redoc", "/api/health"}
+
+
+class ApiKeyMiddleware(BaseHTTPMiddleware):
+    """Require X-API-Key header when API_SECRET_KEY env var is set."""
+
+    async def dispatch(self, request: Request, call_next):
+        # Skip if API key auth is not configured
+        if not _API_SECRET_KEY:
+            return await call_next(request)
+
+        # Skip if Easy Auth already authenticated this request
+        if request.headers.get("x-ms-client-principal"):
+            return await call_next(request)
+
+        # Allow public/Swagger paths without a key
+        if request.url.path in _PUBLIC_PATHS:
+            return await call_next(request)
+
+        # Allow OPTIONS (CORS preflight)
+        if request.method == "OPTIONS":
+            return await call_next(request)
+
+        # Validate the key
+        provided_key = request.headers.get("x-api-key", "")
+        if not provided_key or provided_key != _API_SECRET_KEY:
+            return JSONResponse(
+                status_code=401,
+                content={"detail": "Invalid or missing API key. Set X-API-Key header."},
+            )
+
+        return await call_next(request)
+
+
+app.add_middleware(ApiKeyMiddleware)
+
 # Include modular routers (lazy loading to avoid circular imports)
 try:
     from app.claims.api import router as claims_api_router

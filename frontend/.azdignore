@@ -1,0 +1,9 @@
+# Frontend .azdignore — applied when packaging from dist (.next/standalone)
+# Do NOT exclude node_modules here — standalone output bundles only required modules
+src/
+.next/cache/
+*.ts
+*.tsx
+tsconfig.json
+tailwind.config.js
+postcss.config.js

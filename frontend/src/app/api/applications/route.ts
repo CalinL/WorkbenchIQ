@@ -11,10 +11,16 @@ export async function GET(request: NextRequest) {
       ? `${API_BASE_URL}/api/applications?${queryString}`
       : `${API_BASE_URL}/api/applications`;
     
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+    const apiSecretKey = process.env.API_SECRET_KEY;
+    if (apiSecretKey) {
+      headers['x-api-key'] = apiSecretKey;
+    }
+
     const response = await fetch(url, {
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers,
       cache: 'no-store',
     });
 
@@ -44,8 +50,15 @@ export async function POST(request: NextRequest) {
   try {
     const formData = await request.formData();
     
+    const postHeaders: Record<string, string> = {};
+    const postApiKey = process.env.API_SECRET_KEY;
+    if (postApiKey) {
+      postHeaders['x-api-key'] = postApiKey;
+    }
+
     const response = await fetch(`${API_BASE_URL}/api/applications`, {
       method: 'POST',
+      headers: postHeaders,
       body: formData,
     });
 

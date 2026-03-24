@@ -25,6 +25,7 @@ class StorageSettings:
     azure_account_key: Optional[str] = None
     azure_container_name: Optional[str] = None
     azure_connection_string: Optional[str] = None
+    azure_use_managed_identity: bool = False
     azure_timeout_seconds: int = 30
     azure_retry_total: int = 3
     
@@ -47,6 +48,7 @@ class StorageSettings:
             azure_account_key=os.getenv("AZURE_STORAGE_ACCOUNT_KEY"),
             azure_container_name=os.getenv("AZURE_STORAGE_CONTAINER_NAME"),
             azure_connection_string=os.getenv("AZURE_STORAGE_CONNECTION_STRING"),
+            azure_use_managed_identity=os.getenv("AZURE_STORAGE_USE_MANAGED_IDENTITY", "false").lower() == "true",
             azure_timeout_seconds=int(os.getenv("AZURE_STORAGE_TIMEOUT_SECONDS", "30")),
             azure_retry_total=int(os.getenv("AZURE_STORAGE_RETRY_TOTAL", "3")),
             public_base_url=os.getenv("PUBLIC_FILES_BASE_URL"),

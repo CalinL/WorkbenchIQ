@@ -11,10 +11,16 @@ export async function GET(
   const appId = params.id;
   
   try {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+    const apiSecretKey = process.env.API_SECRET_KEY;
+    if (apiSecretKey) {
+      headers['x-api-key'] = apiSecretKey;
+    }
+
     const response = await fetch(`${API_BASE_URL}/api/applications/${appId}`, {
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers,
       cache: 'no-store',
     });
 
