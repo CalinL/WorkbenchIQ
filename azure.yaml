@@ -1,0 +1,138 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Azure/azure-dev/main/schemas/v1.0/azure.yaml.json
+name: workbenchiq
+metadata:
+  template: workbenchiq@0.0.1
+
+services:
+  api:
+    project: .
+    language: python
+    host: appservice
+
+  web:
+    project: ./frontend
+    language: js
+    host: appservice
+    hooks:
+      prepackage:
+        shell: sh
+        run: |
+          echo "Installing frontend dependencies..."
+          npm install
+          echo "Building Next.js (standalone)..."
+          npm run build
+          echo "Copying static assets into standalone output..."
+          cp -r .next/static .next/standalone/.next/
+          if [ -d "public" ]; then cp -r public .next/standalone/; fi
+    dist: .next/standalone
+
+hooks:
+  postprovision:
+    shell: sh
+    run: |
+      echo ""
+      echo "============================================================"
+      echo " Configuring Content Understanding model defaults..."
+      echo "============================================================"
+      # Get the AI Services endpoint from azd outputs
+      CU_ENDPOINT=$(azd env get-value AZURE_CONTENT_UNDERSTANDING_ENDPOINT 2>/dev/null || echo "")
+      if [ -z "$CU_ENDPOINT" ]; then
+        echo "WARNING: Could not read AZURE_CONTENT_UNDERSTANDING_ENDPOINT from azd env. Skipping CU setup."
+        exit 0
+      fi
+      # Get Azure AD token for the AIServices resource
+      TOKEN=$(az account get-access-token --resource https://cognitiveservices.azure.com --query accessToken -o tsv 2>/dev/null || echo "")
+      if [ -z "$TOKEN" ]; then
+        echo "WARNING: Could not get Azure AD token. Run 'az login' and retry. Skipping CU setup."
+        exit 0
+      fi
+      # Configure CU defaults — map model names to deployment names
+      echo "Endpoint: $CU_ENDPOINT"
+      HTTP_STATUS=$(curl -s -o /tmp/cu_setup_response.json -w "%{http_code}" \
+        -X PATCH "${CU_ENDPOINT}/contentunderstanding/defaults?api-version=2025-11-01" \
+        -H "Authorization: Bearer $TOKEN" \
+        -H "Content-Type: application/merge-patch+json" \
+        -d '{"modelDeployments":{"gpt-4.1":"gpt-4.1","gpt-4.1-mini":"gpt-4.1-mini","text-embedding-3-large":"text-embedding-3-large"}}')
+      if [ "$HTTP_STATUS" = "200" ] || [ "$HTTP_STATUS" = "201" ]; then
+        echo "Content Understanding model defaults configured successfully!"
+      else
+        echo "WARNING: CU defaults setup returned HTTP $HTTP_STATUS (non-fatal)."
+        cat /tmp/cu_setup_response.json 2>/dev/null || true
+        echo ""
+        echo "You can configure manually later: uv run python scripts/setup_content_understanding.py"
+      fi
+      echo "============================================================"
+      echo ""
+
+      # ── Easy Auth setup (only when AUTH_TENANT_ID is set) ──
+      TENANT_ID=$(azd env get-value AUTH_TENANT_ID 2>/dev/null || echo "")
+      if [ -z "$TENANT_ID" ]; then
+        echo "Easy Auth: Skipped (AUTH_TENANT_ID not set)."
+        echo "To enable: azd env set AUTH_TENANT_ID \$(az account show --query tenantId -o tsv) && azd up"
+        exit 0
+      fi
+
+      RG=$(azd env get-value AZURE_RESOURCE_GROUP 2>/dev/null || echo "")
+      SUB_ID=$(az account show --query id -o tsv 2>/dev/null || echo "")
+      API_NAME=$(az webapp list --resource-group "$RG" --query "[?tags.\"azd-service-name\"=='api'].name" -o tsv 2>/dev/null || echo "")
+      WEB_NAME=$(az webapp list --resource-group "$RG" --query "[?tags.\"azd-service-name\"=='web'].name" -o tsv 2>/dev/null || echo "")
+
+      # Helper: ensure app is on auth v2 (clear stale v1 if needed)
+      ensure_auth_v2() {
+        local APP_NAME="$1"
+        az rest --method PUT \
+          --url "/subscriptions/$SUB_ID/resourceGroups/$RG/providers/Microsoft.Web/sites/$APP_NAME/config/authsettingsV2?api-version=2023-12-01" \
+          --body '{"properties":{"platform":{"enabled":false},"globalValidation":{},"identityProviders":{}}}' \
+          > /dev/null 2>&1 || true
+      }
+
+      # Helper: get or create Entra app registration
+      get_or_create_app() {
+        local DISPLAY_NAME="$1"
+        local ENV_KEY="$2"
+        local REDIRECT_URI="$3"
+        local CLIENT_ID=$(azd env get-value "$ENV_KEY" 2>/dev/null || echo "")
+        if [ -z "$CLIENT_ID" ]; then
+          echo "  Creating Entra app registration: $DISPLAY_NAME"
+          if [ -n "$REDIRECT_URI" ]; then
+            CLIENT_ID=$(az ad app create --display-name "$DISPLAY_NAME" --sign-in-audience AzureADMyOrg --web-redirect-uris "$REDIRECT_URI" --query appId -o tsv 2>&1)
+          else
+            CLIENT_ID=$(az ad app create --display-name "$DISPLAY_NAME" --sign-in-audience AzureADMyOrg --query appId -o tsv 2>&1)
+          fi
+          azd env set "$ENV_KEY" "$CLIENT_ID" 2>/dev/null
+          echo "  Created: $CLIENT_ID"
+        else
+          echo "  Using existing app registration: $CLIENT_ID"
+        fi
+        echo "$CLIENT_ID"
+      }
+
+      if [ -n "$API_NAME" ]; then
+        echo "Configuring Easy Auth on backend ($API_NAME)..."
+        ensure_auth_v2 "$API_NAME"
+        API_CLIENT_ID=$(get_or_create_app "WorkbenchIQ-API" "AUTH_API_CLIENT_ID" "")
+        az webapp auth microsoft update \
+          --name "$API_NAME" --resource-group "$RG" \
+          --client-id "$API_CLIENT_ID" \
+          --issuer "https://sts.windows.net/$TENANT_ID/v2.0" \
+          --yes 2>&1 | head -3 || echo "WARNING: Backend Easy Auth config failed"
+        az webapp auth update \
+          --name "$API_NAME" --resource-group "$RG" \
+          --enabled true \
+          --action Return401 2>&1 | tail -3 || true
+        echo "Backend Easy Auth: Configured (Return401)"
+      fi
+
+      if [ -n "$WEB_NAME" ]; then
+        echo "Configuring Easy Auth on frontend ($WEB_NAME)..."
+        ensure_auth_v2 "$WEB_NAME"
+        WEB_URL="https://${WEB_NAME}.azurewebsites.net"
+        WEB_CLIENT_ID=$(get_or_create_app "WorkbenchIQ-Frontend" "AUTH_FRONTEND_CLIENT_ID" "$WEB_URL/.auth/login/aad/callback")
+        # Use REST API directly to set the full config with redirectToProvider
+        az rest --method PUT \
+          --url "/subscriptions/$SUB_ID/resourceGroups/$RG/providers/Microsoft.Web/sites/$WEB_NAME/config/authsettingsV2?api-version=2023-12-01" \
+          --body "{\"properties\":{\"platform\":{\"enabled\":true,\"runtimeVersion\":\"~1\"},\"globalValidation\":{\"requireAuthentication\":true,\"unauthenticatedClientAction\":\"RedirectToLoginPage\",\"redirectToProvider\":\"azureActiveDirectory\"},\"identityProviders\":{\"azureActiveDirectory\":{\"enabled\":true,\"login\":{\"disableWWWAuthenticate\":false},\"registration\":{\"clientId\":\"$WEB_CLIENT_ID\",\"openIdIssuer\":\"https://sts.windows.net/$TENANT_ID/v2.0\"},\"validation\":{\"defaultAuthorizationPolicy\":{\"allowedApplications\":[],\"allowedPrincipals\":{}},\"jwtClaimChecks\":{}}}},\"login\":{\"tokenStore\":{\"enabled\":true}}}}" \
+          -o none 2>&1 || echo "WARNING: Frontend Easy Auth config failed"
+        echo "Frontend Easy Auth: Configured (RedirectToLoginPage → AAD)"
+      fi
+      echo "============================================================"

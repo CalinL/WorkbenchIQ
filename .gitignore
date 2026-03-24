@@ -260,6 +260,9 @@ data/
 azure.json
 azureProfile.json
 
+# Azure Developer CLI
+.azure/
+
 # Service account keys
 *.pem
 *.key
